@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Space Invaders</title>
+    <style>
+        /* Make the entire page black */
+        body {
+            background-color: black;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        canvas {
+            background: none;
+            display: block;
+            margin: 0 auto;
+            position: relative;
+            border: 5px solid blue; /* Blue outline around the game canvas */
+        }
+
+        #gameOver {
+            display: none;
+            color: white;
+            text-align: center;
+            font-size: 36px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        #restartButton {
+            display: none;
+            font-size: 24px;
+            padding: 10px 20px;
+            position: absolute;
+            top: 60%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        /* Explosion images positioned relative to canvas */
+        .explosion {
+            position: absolute;
+            width: 130px; /* 30% bigger than original size */
+            height: 130px;
+            display: none; /* Initially hidden */
+            pointer-events: none; /* Make them non-interactive */
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div id="gameOver">GAME OVER</div>
+    <button id="restartButton">Restart</button>
+
+    <!-- Explosion images -->
+    <img id="explosion1" class="explosion" src="5869b5035b6b2993997209cccd42692b_w200.webp">
+    <img id="explosion2" class="explosion" src="a07ad08920f303f655251b1a0b353b86_w200.webp">
+
+    <!-- Audio elements for background music and hit sound -->
+    <audio id="bgMusic" src="game-music-loop-7-145285.mp3" preload="auto" loop></audio>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Load player image
+        const playerImg = new Image();
+        playerImg.src = 'image.png';  // Replace with the actual name of the player's image file
+
+        // Load ground enemy image (old enemy)
+        const groundImg = new Image();
+        groundImg.src = 'image-removebg-preview.png';  // The ground enemy image
+
+        // Load lift enemy image (new enemy)
+        const liftImg = new Image();
+        liftImg.src = 'image-removebg-preview (1).png';  // The lift enemy image
+
+        // Load lives images (small player images representing lives)
+        const lifeImg = new Image();
+        lifeImg.src = 'image.png';  // The same player image, used to represent remaining lives
+
+        // Load the fabric logo
+        const fabricLogo = new Image();
+        fabricLogo.src = 'fs07ctg29wT95gbs4357.png';  // Fabric logo as the background
+
+        // Get explosion images by ID
+        const explosionImages = [
+            document.getElementById('explosion1'),
+            document.getElementById('explosion2')
+        ];
+
+        // Load background music and hit sound
+        const bgMusic = document.getElementById('bgMusic');
+        const hitSound = new Audio('WhatsApp Audio 2024-10-14 at 20.56.36.wav'); // Sound when player is hit
+
+        // Load projectile hit sound
+        const projectileHitSound = 'WhatsApp Audio 2024-10-14 at 21.20.16.wav'; // Sound when projectile hits enemy
+
+        // Set the volume: 50% for background music
+        bgMusic.volume = 0.5;
+        hitSound.volume = 1.0; // Full volume for hit sound
+
+        let player = {
+            x: canvas.width / 2 - 25,
+            y: canvas.height - 50,
+            width: 50,
+            height: 50,
+            speed: 5
+        };
+
+        let bullets = [];
+        let enemies = [];
+        let score = 0; // Initialize score
+        let lives = 3; // Initialize lives
+        let speedMultiplier = 1; // Speed multiplier to increase the game speed
+        let gameSpeedIncreaseInterval; // To store the interval for increasing game speed
+
+        const gameOverElement = document.getElementById('gameOver');
+        const restartButton = document.getElementById('restartButton');
+
+        // Create initial enemies
+        for (let i = 0; i < 5; i++) {
+            enemies.push(createEnemy());
+        }
+
+        // Create a new enemy (randomly either "Ground" or "Lift")
+        function createEnemy() {
+            const isLift = Math.random() < 0.4; // 40% chance for lift enemy
+            return {
+                x: Math.random() * (canvas.width - 50),
+                y: Math.random() * -100 - 50,
+                width: isLift ? 60 : 50,  // Lift enemies are 20% bigger
+                height: isLift ? 60 : 50,  // Lift enemies are 20% bigger
+                speed: (isLift ? 4 : 2) * speedMultiplier,  // Speed affected by multiplier
+                points: isLift ? 20 : 10, // Lift enemies are worth 20 points
+                isLift: isLift,  // Identify lift enemies
+                img: isLift ? liftImg : groundImg  // Choose the image
+            };
+        }
+
+        function drawPlayer() {
+            ctx.drawImage(playerImg, player.x, player.y, player.width, player.height);
+        }
+
+        // Function to draw the Fabric logo as faded background
+        function drawBackground() {
+            ctx.save();
+            ctx.globalAlpha = 0.1;  // Set opacity to 10% (faded effect)
+            const logoWidth = 400;   // Set logo size
+            const logoHeight = 100;
+            ctx.drawImage(fabricLogo, (canvas.width / 2) - (logoWidth / 2), (canvas.height / 2) - (logoHeight / 2), logoWidth, logoHeight);
+            ctx.restore();
+        }
+
+        function drawEnemies() {
+            enemies.forEach((enemy, index) => {
+                // Move enemies with speed multiplier applied
+                enemy.y += enemy.speed;
+
+                // If enemy is off-screen, reset its position to the top
+                if (enemy.y > canvas.height) {
+                    enemies[index] = createEnemy(); // Respawn a new enemy at the top
+                }
+
+                // Draw enemies using the selected image (ground or lift)
+                ctx.drawImage(enemy.img, enemy.x, enemy.y, enemy.width, enemy.height);
+
+                // Check if any bullet hits the enemy
+                bullets.forEach((bullet, bulletIndex) => {
+                    if (isBulletColliding(bullet, enemy)) {
+                        // Increment the score based on enemy type
+                        score += enemy.points;
+
+                        // Spawn explosion at the enemy's position
+                        spawnExplosion(enemy.x, enemy.y);
+
+                        // Respawn the enemy
+                        enemies[index] = createEnemy();
+
+                        // Remove the bullet
+                        bullets.splice(bulletIndex, 1);
+
+                        // Play the projectile hit sound
+                        playProjectileHitSound();
+                    }
+                });
+
+                // Check if enemy hits the player
+                if (isColliding(player, enemy)) {
+                    playHitSound();
+                    enemies[index] = createEnemy(); // Respawn the enemy after hit
+                    loseLife(); // Lose 1 life
+                }
+            });
+        }
+
+        function drawBullets() {
+            bullets.forEach((bullet, index) => {
+                ctx.fillStyle = 'white';
+                ctx.fillRect(bullet.x, bullet.y, 5, 10);
+                bullet.y -= 7;
+
+                // Remove bullets if they go off the screen
+                if (bullet.y < 0) {
+                    bullets.splice(index, 1);
+                }
+            });
+        }
+
+        // Function to spawn and display explosion at given coordinates
+        function spawnExplosion(x, y) {
+            // Randomly select one of the explosion GIFs
+            const explosion = explosionImages[Math.floor(Math.random() * explosionImages.length)];
+
+            // Position the explosion at the enemy's coordinates (adjust for the explosion size)
+            explosion.style.left = canvas.offsetLeft + x + 'px';
+            explosion.style.top = canvas.offsetTop + y + 'px';
+            explosion.style.display = 'block'; // Show the explosion
+
+            // Hide the explosion after 500ms (animation duration)
+            setTimeout(() => {
+                explosion.style.display = 'none';
+            }, 500);
+        }
+
+        // Function to play the hit sound when the player is hit
+        function playHitSound() {
+            hitSound.currentTime = 0; // Reset the sound to start from the beginning
+            hitSound.play();
+        }
+
+        // Function to play the projectile hit sound (clone for fast repeat)
+        function playProjectileHitSound() {
+            let sound = new Audio(projectileHitSound); // Clone the hit sound
+            sound.volume = 1.0;  // Set volume to 100%
+            sound.play();  // Play sound for hitting enemy
+        }
+
+        // Function to draw the score and lives (as images) on the canvas
+        function drawScoreAndLives() {
+            // Draw the score as text
+            ctx.fillStyle = 'yellow';
+            ctx.font = '24px Arial';
+            ctx.fillText('Score: ' + score, 10, 30);
+
+            // Draw lives as small images
+            for (let i = 0; i < lives; i++) {
+                ctx.drawImage(lifeImg, 10 + (i * 35), 50, 30, 30);  // Draw each life image with spacing
+            }
+        }
+
+        // Check if a bullet is colliding with an enemy
+        function isBulletColliding(bullet, enemy) {
+            return bullet.x < enemy.x + enemy.width &&
+                   bullet.x + 5 > enemy.x &&
+                   bullet.y < enemy.y + enemy.height &&
+                   bullet.y + 10 > enemy.y;
+        }
+
+        // Check if the player is colliding with an enemy
+        function isColliding(player, enemy) {
+            return player.x < enemy.x + enemy.width &&
+                   player.x + player.width > enemy.x &&
+                   player.y < enemy.y + enemy.height &&
+                   player.y + player.height > enemy.y;
+        }
+
+        // Decrease player lives when hit and check for game over
+        function loseLife() {
+            lives -= 1;
+            if (lives === 0) {
+                endGame();
+            }
+        }
+
+        // End the game and show game over screen
+        function endGame() {
+            gameOverElement.style.display = 'block';  // Show "Game Over"
+            restartButton.style.display = 'block';    // Show restart button
+            cancelAnimationFrame(animationId);        // Stop the game loop
+            clearInterval(gameSpeedIncreaseInterval); // Stop the speed increase interval
+        }
+
+        // Restart the game
+        function restartGame() {
+            score = 0;
+            lives = 3;
+            speedMultiplier = 1;  // Reset speed multiplier
+            clearInterval(gameSpeedIncreaseInterval); // Reset the speed increase interval
+
+            gameOverElement.style.display = 'none';   // Hide "Game Over"
+            restartButton.style.display = 'none';     // Hide restart button
+            bullets = [];                             // Clear bullets
+            enemies = [];                             // Clear enemies
+
+            for (let i = 0; i < 5; i++) {
+                enemies.push(createEnemy());          // Create new enemies
+            }
+
+            // Increase game speed by 10% every 25 seconds
+            gameSpeedIncreaseInterval = setInterval(() => {
+                speedMultiplier *= 1.1; // Increase speed by 10%
+                enemies.forEach(enemy => {
+                    enemy.speed *= 1.1;  // Update existing enemies' speed
+                });
+            }, 25000);  // Every 25 seconds
+
+            update();  // Restart the game loop
+        }
+
+        let animationId;  // To store the animation frame ID for proper cancellation
+
+        function update() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear the canvas
+            drawBackground(); // Draw the Fabric logo as background
+            drawPlayer();
+            drawEnemies();
+            drawBullets();
+            drawScoreAndLives(); // Draw the score and lives as images on the game canvas
+            animationId = requestAnimationFrame(update); // Store the animation frame ID
+        }
+
+        // Shoot function to create a new bullet and play the sound
+        function shoot() {
+            bullets.push({ x: player.x + player.width / 2 - 2.5, y: player.y });
+
+            // Play the shooting sound by cloning the audio element
+            let shootSound = new Audio('WhatsApp Audio 2024-10-14 at 20.35.52.wav');
+            shootSound.volume = 0.8;
+            shootSound.play();
+        }
+
+        // Start background music after user interaction
+        function startMusic() {
+            if (bgMusic.paused) {
+                bgMusic.play(); // Play background music after the first interaction
+            }
+        }
+
+        // Mouse movement event to move the player and trigger music start
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+
+            // Move the player based on the mouse position, keeping it within the canvas bounds
+            player.x = Math.min(Math.max(mouseX - player.width / 2, 0), canvas.width - player.width);
+
+            // Start music on first interaction
+            startMusic();
+        });
+
+        // Mouse click event to shoot bullets when the left button is clicked
+        canvas.addEventListener('mousedown', (e) => {
+            if (e.button === 0) {  // Left mouse button
+                shoot();
+                startMusic();  // Ensure music starts on first click if it hasn't yet
+            }
+        });
+
+        // Restart button click event
+        restartButton.addEventListener('click', restartGame);
+
+        // Start the game loop once the ground image is loaded
+        groundImg.onload = function() {
+            restartGame();  // Start the game loop when the page first loads
+        };
+    </script>
+</body>
+</html>
